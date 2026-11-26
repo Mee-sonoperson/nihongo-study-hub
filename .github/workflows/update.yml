@@ -1,0 +1,92 @@
+name: Update app from Google Drive
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for a new version
+        id: src
+        run: |
+          SHEET=1D2RsiQQ-KNOIr36ATEXPAJnuVl5lCCn7yMFIevjLxVs
+          id=$(curl -sSL "https://docs.google.com/spreadsheets/d/${SHEET}/gviz/tq?tqx=out:csv&sheet=admin&range=B2" | tr -d '"[:space:]')
+          cur=$(cat .source_id 2>/dev/null || echo none)
+          echo "sheet=$id current=$cur"
+          if echo "$id" | grep -Eq '^[A-Za-z0-9_-]{20,}$' && [ "$id" != "$cur" ]; then
+            curl -sSL -o /tmp/src.zip "https://drive.usercontent.google.com/download?id=${id}&export=download&confirm=t"
+            unzip -tq /tmp/src.zip
+            git ls-files | grep -v '^\.github/' | xargs -r git rm -q --
+            unzip -o -q /tmp/src.zip -d .
+            echo "$id" > .source_id
+            git config user.name "github-actions"
+            git config user.email "github-actions@users.noreply.github.com"
+            git add -A
+            git commit -q -m "Update app from Google Drive ($id)"
+            git push origin HEAD:main
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore icons
+        if: steps.src.outputs.build == 'true'
+        run: |
+          mkdir -p web/icons
+          for f in icons_base64/*.b64; do
+            n=$(basename "$f" .b64)
+            if [ "$n" = "favicon.png" ]; then base64 -d "$f" > web/favicon.png; else base64 -d "$f" > "web/icons/$n"; fi
+          done
+
+      - uses: subosito/flutter-action@v2
+        if: steps.src.outputs.build == 'true'
+        with:
+          flutter-version: 3.35.4
+          channel: stable
+          cache: true
+
+      - name: Build
+        if: steps.src.outputs.build == 'true'
+        run: |
+          set -o pipefail
+          flutter pub get 2>&1 | tee build.log
+          flutter analyze --no-fatal-infos --no-fatal-warnings 2>&1 | tee -a build.log
+          flutter build web --release --base-href "/${{ github.event.repository.name }}/" 2>&1 | tee -a build.log
+
+      - name: Publish to gh-pages
+        if: steps.src.outputs.build == 'true'
+        run: |
+          cd build/web
+          touch .nojekyll
+          git init -q -b gh-pages
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Publish ${{ github.sha }}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" gh-pages
+
+      - name: Save error log
+        if: failure()
+        run: |
+          mkdir -p /tmp/log && cp build.log /tmp/log/build.log 2>/dev/null || echo "failed before build (see Actions)" > /tmp/log/build.log
+          cd /tmp/log
+          git init -q -b build-log
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Build failed"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" build-log
