@@ -1,0 +1,75 @@
+name: Build and publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Import source from Google Drive (first time only)
+        if: hashFiles('pubspec.yaml') == ''
+        run: |
+          id=17hxsNJeuAz2mM3FA6HVElWUHcBo2Vre0
+          curl -sSL -o /tmp/src.zip "https://drive.usercontent.google.com/download?id=${id}&export=download&confirm=t"
+          unzip -o -q /tmp/src.zip -d .
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Import app source from Google Drive"
+          git push origin HEAD:main
+
+      - name: Restore icons
+        run: |
+          mkdir -p web/icons
+          for f in icons_base64/*.b64; do
+            n=$(basename "$f" .b64)
+            if [ "$n" = "favicon.png" ]; then base64 -d "$f" > web/favicon.png; else base64 -d "$f" > "web/icons/$n"; fi
+          done
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.35.4
+          channel: stable
+          cache: true
+
+      - name: Build
+        run: |
+          set -o pipefail
+          flutter pub get 2>&1 | tee build.log
+          flutter analyze --no-fatal-infos --no-fatal-warnings 2>&1 | tee -a build.log
+          flutter build web --release --base-href "/${{ github.event.repository.name }}/" 2>&1 | tee -a build.log
+
+      - name: Publish to gh-pages
+        run: |
+          cd build/web
+          touch .nojekyll
+          git init -q -b gh-pages
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Publish ${{ github.sha }}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" gh-pages
+
+      - name: Save error log
+        if: failure()
+        run: |
+          mkdir -p /tmp/log && cp build.log /tmp/log/build.log 2>/dev/null || echo "no log" > /tmp/log/build.log
+          cd /tmp/log
+          git init -q -b build-log
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Build failed ${{ github.sha }}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" build-log
