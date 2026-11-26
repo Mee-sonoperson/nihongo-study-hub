@@ -10,12 +10,35 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 const _tabs = ['lessons', 'assignments', 'notices', 'vocabulary'];
+// 1課の流れ用のタブ(無くても動く)
+const _optionalTabs = ['steps', 'grammar', 'dialog'];
 
 /// シートを読み込んで {lessons: [...], assignments: [...], ...} を返す。
 /// どれか1つでも読めなければ例外を投げる(→ 呼び出し側で前回の内容を使う)。
 Future<Map<String, dynamic>> loadContentFromSheet(String sheetId) async {
   final result = <String, dynamic>{};
   for (final tab in _tabs) {
+    result[tab] = await _loadTab(sheetId, tab);
+  }
+  for (final tab in _optionalTabs) {
+    try {
+      final rows = await _loadTab(sheetId, tab);
+      // タブが無いと Google は別のタブを返すので、列名で確かめる
+      final ok = rows.isEmpty ||
+          (tab == 'steps' && rows.first.containsKey('type')) ||
+          (tab == 'grammar' && rows.first.containsKey('question')) ||
+          (tab == 'dialog' && rows.first.containsKey('speaker'));
+      result[tab] = ok ? rows : <Map<String, dynamic>>[];
+    } catch (_) {
+      result[tab] = <Map<String, dynamic>>[];
+    }
+  }
+  return result;
+}
+
+/// 1つのタブを読み込む
+Future<List<Map<String, dynamic>>> _loadTab(String sheetId, String tab) async {
+  {
     final url = Uri.parse(
         'https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq'
         '?tqx=out:csv&headers=1&sheet=$tab');
@@ -29,9 +52,8 @@ Future<Map<String, dynamic>> loadContentFromSheet(String sheetId) async {
       throw Exception('Sheet "$tab" is not shared (anyone with the link)');
     }
     final rows = _parseCsv(text);
-    result[tab] = _rowsToMaps(tab, rows);
+    return _rowsToMaps(tab, rows);
   }
-  return result;
 }
 
 /// CSV の行 → Map のリストに変換(タブごとの決まりもここで処理)
@@ -56,11 +78,11 @@ List<Map<String, dynamic>> _rowsToMaps(String tab, List<List<String>> rows) {
       if (m[k] != null) m[k] = _normDate('${m[k]}');
     }
     // 数字の列
-    for (final k in ['number', 'minutes', 'maxScore']) {
+    for (final k in ['number', 'minutes', 'maxScore', 'order', 'answer']) {
       if (m.containsKey(k)) m[k] = _toInt('${m[k]}');
     }
     // lessons.materials: "タイトル|URL;タイトル|URL"
-    if (tab == 'lessons') {
+    if (tab == 'lessons' || tab == 'assignments') {
       m['materials'] = _split('${m['materials'] ?? ''}')
           .where((s) => s.contains('|'))
           .map((s) {

@@ -110,6 +110,10 @@ class Assignment {
   String submitType; // 求める提出物: "pdf" / "audio" / "image" / "any" / "none"
   int maxScore; // テストの満点(0なら未設定)
   String relatedLessonId; // 関連する授業のid(無ければ空)
+  String instructions; // 手順(; 区切り)
+  String criteria; // 評価のポイント(; 区切り)
+  List<Map<String, String>> materials; // 課題の資料 [{"title","url"}]
+  String videoUrl; // やり方説明の動画(1分ほど)
   // ↓ 学習者側の状態
   bool done; // 提出済み/受験済み
   String doneAt; // 完了日時
@@ -125,6 +129,10 @@ class Assignment {
     this.submitType = 'any',
     this.maxScore = 0,
     this.relatedLessonId = '',
+    this.instructions = '',
+    this.criteria = '',
+    this.materials = const [],
+    this.videoUrl = '',
     this.done = false,
     this.doneAt = '',
     this.score = -1,
@@ -143,6 +151,10 @@ class Assignment {
     'submitType': submitType,
     'maxScore': maxScore,
     'relatedLessonId': relatedLessonId,
+    'instructions': instructions,
+    'criteria': criteria,
+    'materials': materials,
+    'videoUrl': videoUrl,
     'done': done,
     'doneAt': doneAt,
     'score': score,
@@ -158,6 +170,10 @@ class Assignment {
     submitType: '${m['submitType'] ?? 'any'}',
     maxScore: _int(m['maxScore']),
     relatedLessonId: '${m['relatedLessonId'] ?? ''}',
+    instructions: '${m['instructions'] ?? ''}',
+    criteria: '${m['criteria'] ?? ''}',
+    materials: _materialsFrom(m['materials']),
+    videoUrl: '${m['videoUrl'] ?? ''}',
     done: m['done'] == true,
     doneAt: '${m['doneAt'] ?? ''}',
     score: m['score'] == null ? -1 : _int(m['score']),
@@ -314,6 +330,7 @@ class VocabItem {
   String textbookRef; // 教科書の場所: "Lesson 5, p.42"
   List<String> tags; // 使える場面: ["daily life", "time"]
   String hint; // 思い出すためのヒント(意味や例文ではなく、場面・頭文字など)
+  String audioUrl; // 単語の音声(「聞いてみよう」で再生)
 
   VocabItem({
     required this.id,
@@ -325,10 +342,12 @@ class VocabItem {
     this.textbookRef = '',
     this.tags = const [],
     this.hint = '',
+    this.audioUrl = '',
   });
 
   Map<String, dynamic> toMap() => {
     'id': id,
+    'audioUrl': audioUrl,
     'word': word,
     'reading': reading,
     'meaning': meaning,
@@ -349,6 +368,7 @@ class VocabItem {
     textbookRef: '${m['textbookRef'] ?? ''}',
     tags: (m['tags'] as List? ?? []).map((e) => '$e').toList(),
     hint: '${m['hint'] ?? ''}',
+    audioUrl: '${m['audioUrl'] ?? ''}',
   );
 }
 
@@ -434,6 +454,14 @@ class HelperLog {
   );
 }
 
+/// [{"title","url"}] のリスト(シート・Hive どちらの形でも読める)
+List<Map<String, String>> _materialsFrom(dynamic v) => (v as List? ?? [])
+    .map((e) => {
+          'title': '${(e as Map)['title'] ?? ''}',
+          'url': '${e['url'] ?? ''}',
+        })
+    .toList();
+
 int _int(dynamic v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
 
 // -----------------------------------------------------------------------------
@@ -452,6 +480,8 @@ class AppData extends ChangeNotifier {
   late Box _draftsBox;
   late Box _helperBox;
   late Box _settingsBox;
+  late Box _flowBox; // 1課の流れ(steps / grammar / dialog)
+  late Box _progressBox; // 学生のステップ進み具合
 
   // ---- メモリ上のリスト(画面はこれを表示) ----
   List<Lesson> lessons = [];
@@ -462,6 +492,9 @@ class AppData extends ChangeNotifier {
   List<VocabItem> vocab = [];
   List<EssayDraft> drafts = [];
   List<HelperLog> helperLogs = [];
+  List<Map> steps = []; // 1課の流れのステップ
+  List<Map> grammarQs = []; // 文法チェックの問題
+  List<Map> dialogLines = []; // 会話のセリフ
 
   // ---- 設定 ----
   String userName = 'Student';
@@ -489,6 +522,8 @@ class AppData extends ChangeNotifier {
     _draftsBox = await Hive.openBox('drafts');
     _helperBox = await Hive.openBox('helper');
     _settingsBox = await Hive.openBox('settings');
+    _flowBox = await Hive.openBox('flow');
+    _progressBox = await Hive.openBox('progress');
 
     userName = _settingsBox.get('userName', defaultValue: 'Student');
     studentId = _settingsBox.get('studentId', defaultValue: '');
@@ -533,6 +568,24 @@ class AppData extends ChangeNotifier {
       ..sort((a, b) => b.version.compareTo(a.version));
     helperLogs = _helperBox.values.map((e) => HelperLog.fromMap(e)).toList()
       ..sort((a, b) => b.dateTime.compareTo(a.dateTime));
+    // シートの順番を保ったまま、order 列があればその順に並べる
+    List<Map> flow(String key) {
+      final list = (_flowBox.get(key) as List? ?? [])
+          .map((e) => Map.of(e as Map))
+          .toList();
+      for (var i = 0; i < list.length; i++) {
+        list[i]['_row'] = i;
+      }
+      list.sort((a, b) {
+        final c = _int(a['order']).compareTo(_int(b['order']));
+        return c != 0 ? c : _int(a['_row']).compareTo(_int(b['_row']));
+      });
+      return list;
+    }
+
+    steps = flow('steps');
+    grammarQs = flow('grammar');
+    dialogLines = flow('dialog');
   }
 
   // ===========================================================================
@@ -621,6 +674,10 @@ class AppData extends ChangeNotifier {
       final old = _noticesBox.get(fresh.id);
       if (old != null) fresh.read = old['read'] == true;
       await _noticesBox.put(fresh.id, fresh.toMap());
+    }
+    // 1課の流れ(シートの steps / grammar / dialog タブ)
+    for (final key in ['steps', 'grammar', 'dialog']) {
+      await _flowBox.put(key, (data[key] as List? ?? []).toList());
     }
     // 教科書の単語・表現(学習者の状態は無いのでそのまま上書き)
     for (final m in (data['vocabulary'] as List? ?? [])) {
@@ -1003,6 +1060,44 @@ class AppData extends ChangeNotifier {
   }
 
   // ===========================================================================
+  // 1課の流れ(Lesson steps)
+  // ===========================================================================
+  List<Map> stepsFor(String lessonId) =>
+      steps.where((s) => '${s['lessonId']}' == lessonId).toList();
+  List<Map> grammarFor(String lessonId) =>
+      grammarQs.where((q) => '${q['lessonId']}' == lessonId).toList();
+  List<Map> dialogFor(String lessonId) =>
+      dialogLines.where((d) => '${d['lessonId']}' == lessonId).toList();
+  List<VocabItem> vocabOfLesson(String lessonId) =>
+      vocab.where((v) => v.lessonId == lessonId).toList();
+
+  /// ステップが終わっているか(作文・発表は課題の提出で判定)
+  bool isStepDone(Map step) {
+    final type = '${step['type']}';
+    if (type == 'essay' || type == 'presentation') {
+      return assignment('${step['assignmentId']}')?.done ?? false;
+    }
+    final p = _progressBox.get('${step['id']}');
+    return p is Map && p['done'] == true;
+  }
+
+  /// 文法チェックの点数など(無ければ null)
+  Map? stepProgress(String stepId) {
+    final p = _progressBox.get(stepId);
+    return p is Map ? p : null;
+  }
+
+  Future<void> completeStep(String stepId, {int? score, int? total}) async {
+    await _progressBox.put(stepId, {
+      'done': true,
+      'at': DateTime.now().toIso8601String(),
+      if (score != null) 'score': score,
+      if (total != null) 'total': total,
+    });
+    notifyListeners();
+  }
+
+  // ===========================================================================
   // 授業(Lessons)
   // ===========================================================================
   Lesson? lesson(String id) {
@@ -1085,6 +1180,7 @@ class AppData extends ChangeNotifier {
     await _filesBox.clear();
     await _draftsBox.clear();
     await _helperBox.clear();
+    await _progressBox.clear();
     await _lessonsBox.clear();
     await _assignmentsBox.clear();
     await _noticesBox.clear();

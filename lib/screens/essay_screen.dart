@@ -19,11 +19,13 @@ import 'package:provider/provider.dart';
 import 'package:record/record.dart';
 import '../app_data.dart';
 import '../helpers.dart';
+import 'flow_screens.dart' show openLink;
 import 'portfolio_screen.dart';
 
 class EssayScreen extends StatefulWidget {
   final String assignmentId;
-  const EssayScreen(this.assignmentId, {super.key});
+  final int initialTab; // 0 = Write, 1 = Recall, 2 = Record(発表)
+  const EssayScreen(this.assignmentId, {super.key, this.initialTab = 0});
 
   @override
   State<EssayScreen> createState() => _EssayScreenState();
@@ -31,7 +33,8 @@ class EssayScreen extends StatefulWidget {
 
 class _EssayScreenState extends State<EssayScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabs = TabController(length: 3, vsync: this);
+  late final TabController _tabs =
+      TabController(length: 3, vsync: this, initialIndex: widget.initialTab);
   final textCtrl = TextEditingController();
   bool _loadedDraft = false;
 
@@ -79,12 +82,32 @@ class _EssayScreenState extends State<EssayScreen>
       body: SafeArea(
         child: !_loadedDraft
             ? const Center(child: CircularProgressIndicator())
-            : TabBarView(
-                controller: _tabs,
+            : Column(
                 children: [
-                  _WriteTab(a: a, ctrl: textCtrl),
-                  _RecallTab(a: a),
-                  _RecordTab(a: a, textCtrl: textCtrl),
+                  // やり方説明の動画(先生が assignments の videoUrl に入れたとき)
+                  if (a.videoUrl.isNotEmpty)
+                    Material(
+                      color: kFlame.withValues(alpha: 0.12),
+                      child: ListTile(
+                        dense: true,
+                        leading: const Icon(Icons.smart_display_rounded,
+                            color: kFlame),
+                        title: const Text('How to do this homework (video)',
+                            style: TextStyle(fontWeight: FontWeight.w700)),
+                        trailing: const Icon(Icons.open_in_new, size: 18),
+                        onTap: () => openLink(context, a.videoUrl),
+                      ),
+                    ),
+                  Expanded(
+                    child: TabBarView(
+                      controller: _tabs,
+                      children: [
+                        _WriteTab(a: a, ctrl: textCtrl),
+                        _RecallTab(a: a),
+                        _RecordTab(a: a, textCtrl: textCtrl),
+                      ],
+                    ),
+                  ),
                 ],
               ),
       ),

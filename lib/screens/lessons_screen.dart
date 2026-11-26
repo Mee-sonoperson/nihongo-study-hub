@@ -13,6 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../app_data.dart';
 import '../helpers.dart';
 import 'assignments_screen.dart';
+import 'flow_screens.dart';
 import 'notices_screen.dart';
 import 'study_log_sheet.dart';
 
@@ -369,6 +370,8 @@ class LessonDetailScreen extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 16),
+            // ---- 1課の流れ(シートの steps タブ)----
+            LessonStepsCard(l.id),
             BigButton(
               text: 'Watch video',
               icon: Icons.play_arrow_rounded,

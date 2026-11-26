@@ -12,6 +12,7 @@ import 'package:provider/provider.dart';
 import '../app_data.dart';
 import '../helpers.dart';
 import 'essay_screen.dart';
+import 'flow_screens.dart' show openLink;
 import 'lessons_screen.dart';
 import 'notices_screen.dart';
 import 'portfolio_screen.dart';
@@ -424,6 +425,94 @@ class AssignmentDetailScreen extends StatelessWidget {
             ),
             const SizedBox(height: 14),
 
+            // ---- やり方の動画・手順・評価のポイント・資料 ----
+            if (a.videoUrl.isNotEmpty) ...[
+              BigButton(
+                text: 'How to do this homework (video)',
+                icon: Icons.smart_display_rounded,
+                color: kFlame,
+                onPressed: () => openLink(context, a.videoUrl),
+              ),
+              const SizedBox(height: 14),
+            ],
+            if (_split(a.instructions).isNotEmpty) ...[
+              const SectionTitle('What to do'),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    children: [
+                      for (final (i, t) in _split(a.instructions).indexed)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 5),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              CircleAvatar(
+                                radius: 12,
+                                backgroundColor: color,
+                                child: Text('${i + 1}',
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700)),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                  child: Text(t,
+                                      style: const TextStyle(height: 1.5))),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+            ],
+            if (_split(a.criteria).isNotEmpty) ...[
+              const SectionTitle('How it is checked'),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    children: [
+                      for (final t in _split(a.criteria))
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(Icons.star_rounded,
+                                  size: 18, color: kFlame),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                  child: Text(t,
+                                      style: const TextStyle(height: 1.5))),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+            ],
+            if (a.materials.isNotEmpty) ...[
+              const SectionTitle('Materials'),
+              for (final m in a.materials)
+                Card(
+                  child: ListTile(
+                    leading: const IconBox(Icons.description_outlined,
+                        color: kTeal),
+                    title: Text(m['title'] ?? 'Material'),
+                    trailing: const Icon(Icons.open_in_new, size: 18),
+                    onTap: () => openLink(context, m['url'] ?? ''),
+                  ),
+                ),
+              const SizedBox(height: 14),
+            ],
+
             // ---- テストの点数 ----
             if (a.isTest) ...[
               _ScoreCard(a, color),
@@ -762,3 +851,8 @@ class _ScoreCard extends StatelessWidget {
     );
   }
 }
+
+
+/// "A;B;C" → ["A", "B", "C"](空は除く)
+List<String> _split(String s) =>
+    s.split(';').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();

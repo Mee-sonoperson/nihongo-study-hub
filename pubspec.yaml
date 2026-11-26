@@ -21,6 +21,7 @@ dependencies:
   path_provider: ^2.1.5
   share_plus: ^12.0.2
   record: ^5.2.1
+  audioplayers: ^6.4.0     # play word / conversation audio in lesson steps
   cross_file: ^0.3.5+2
 
 dev_dependencies:
