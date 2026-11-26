@@ -1,0 +1,34 @@
+name: nihongo_study_hub
+description: "Nihongo Study Hub - Japanese learning manager for international students: study streaks, homework & test tracking, portfolio of submitted work, on-demand lessons and announcements."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  provider: 6.1.5+1        # state management (one simple AppData class)
+  hive: 2.2.3              # local database (saves everything on the device)
+  hive_flutter: 1.1.0
+  intl: ^0.20.2            # date formatting
+  file_picker: ^8.3.7      # pick PDF / audio / image files to submit
+  url_launcher: ^6.3.1     # open lesson video links (YouTube, Drive, etc.)
+  http: ^1.4.0             # download content.json from a server (optional)
+  path_provider: ^2.1.5
+  share_plus: ^12.0.2
+  record: ^5.2.1
+  cross_file: ^0.3.5+2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/data/
