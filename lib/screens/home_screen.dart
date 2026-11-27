@@ -9,6 +9,7 @@ import '../app_data.dart';
 import '../helpers.dart';
 import 'assignments_screen.dart';
 import 'lessons_screen.dart';
+import 'map_screen.dart';
 import 'notices_screen.dart';
 import 'portfolio_screen.dart';
 import 'settings_screen.dart';
@@ -88,6 +89,18 @@ class HomeScreen extends StatelessWidget {
                   ),
                   onPressed: () => goToTab(4),
                 ),
+                // 保存状況・今日はここまで・ログアウト
+                IconButton(
+                  tooltip: 'My account',
+                  icon: Icon(
+                    data.syncStatus == 'offline'
+                        ? Icons.cloud_off_rounded
+                        : Icons.account_circle_rounded,
+                    color: data.syncStatus == 'offline' ? kOrange : kPrimary,
+                    size: 30,
+                  ),
+                  onPressed: () => showAccountSheet(context),
+                ),
                 IconButton(
                   tooltip: 'Settings',
                   icon: const Icon(Icons.settings_outlined),
@@ -102,6 +115,10 @@ class HomeScreen extends StatelessWidget {
 
             // ---------- ストリークカード ----------
             StreakCard(data: data),
+            const SizedBox(height: 14),
+
+            // ---------- 学習マップ ----------
+            const HomeMapCard(),
             const SizedBox(height: 20),
 
             // ---------- 今日のタスク ----------

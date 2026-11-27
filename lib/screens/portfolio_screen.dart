@@ -13,6 +13,7 @@ import '../app_data.dart';
 import '../helpers.dart';
 import 'assignments_screen.dart';
 import 'file_saver.dart';
+import 'map_screen.dart' show makePortfolio;
 
 class PortfolioScreen extends StatefulWidget {
   const PortfolioScreen({super.key});
@@ -88,6 +89,20 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                       ],
                     ),
                   ],
+                ),
+              ),
+            ),
+            // ---- 1つのファイルにまとめる ----
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: OutlinedButton.icon(
+                  onPressed: () => makePortfolio(context),
+                  icon: const Icon(Icons.auto_stories_rounded),
+                  label: const Text('Make one portfolio file',
+                      style: TextStyle(fontWeight: FontWeight.w700)),
                 ),
               ),
             ),

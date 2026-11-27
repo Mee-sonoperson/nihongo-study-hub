@@ -529,6 +529,7 @@ class AppData extends ChangeNotifier {
   String recordUrl = ''; // 学校のサーバー(Apps Script)の URL(シートの admin タブ recordUrl)
   String pin = ''; // ログインの暗証番号
   String syncStatus = ''; // 'saved' / 'saving' / 'offline'
+  String lastSavedAt = ''; // 最後にサーバーへ保存できた時刻 "17:12"
   Timer? _syncTimer;
   bool _syncing = false;
   bool _restoring = false; // ログイン中(サーバーから読み込み中)は保存しない
@@ -1541,6 +1542,11 @@ class AppData extends ChangeNotifier {
     _syncing = false;
     final ok = res != null && res['ok'] == true;
     syncStatus = ok ? 'saved' : 'offline';
+    if (ok) {
+      final n = DateTime.now();
+      lastSavedAt =
+          '${n.hour.toString().padLeft(2, '0')}:${n.minute.toString().padLeft(2, '0')}';
+    }
     super.notifyListeners();
     return ok;
   }
@@ -1577,6 +1583,40 @@ class AppData extends ChangeNotifier {
     }
     await _settingsBox.put('pendingUploads', left);
     return left.isEmpty;
+  }
+
+  /// まとめたポートフォリオ(1つのファイル)を先生のドライブにも保存する
+  Future<bool> savePortfolioOnline(String fileName, Uint8List bytes) async {
+    if (!loggedIn || !serverReady) return false;
+    final res = await _call({
+      'action': 'upload',
+      'studentId': studentId,
+      'pin': pin,
+      'submissionId': 'portfolio',
+      'fileName': fileName,
+      'mimeType': 'text/html',
+      'data': base64Encode(bytes),
+    }, timeout: const Duration(minutes: 5));
+    return res != null && res['ok'] == true;
+  }
+
+  /// 今日やったことの数(ホームの「今日はここまで」で表示)
+  Map<String, int> todaySummary() {
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    var steps = 0;
+    for (final k in _progressBox.keys) {
+      final v = _progressBox.get(k);
+      if (v is Map && '${v['at'] ?? ''}'.startsWith(today) && !'$k'.startsWith('lesson_')) {
+        steps++;
+      }
+    }
+    final minutes = logs
+        .where((l) => l.date.startsWith(today))
+        .fold<int>(0, (a, l) => a + l.minutes);
+    final files =
+        submissions.where((s) => s.submittedAt.startsWith(today)).length;
+    final drafts = this.drafts.where((d) => d.savedAt.startsWith(today)).length;
+    return {'steps': steps, 'minutes': minutes, 'files': files, 'drafts': drafts};
   }
 
   /// この端末に無いファイル(別のスマホで提出したもの)をサーバーから取る

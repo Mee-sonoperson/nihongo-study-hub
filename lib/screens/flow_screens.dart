@@ -24,6 +24,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../app_data.dart';
 import '../helpers.dart';
 import 'essay_screen.dart';
+import 'map_screen.dart' show LearningMapScreen;
 
 // -----------------------------------------------------------------------------
 // 共通の小さな道具
@@ -1192,7 +1193,34 @@ class LessonProgressCard extends StatelessWidget {
                         ],
                       ),
                     );
-                    if (ok == true) await data.completeLesson(l);
+                    if (ok != true) return;
+                    await data.completeLesson(l);
+                    if (!context.mounted) return;
+                    final goMap = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text('Lesson complete! 🎉'),
+                        content: Text(data.lessonOnTime(l)
+                            ? 'Great job. You finished this lesson on time. Your teacher can see it.'
+                            : 'You finished this lesson. Your teacher can see it.'),
+                        actions: [
+                          TextButton(
+                              onPressed: () => Navigator.pop(ctx, false),
+                              child: const Text('Close')),
+                          FilledButton.icon(
+                            onPressed: () => Navigator.pop(ctx, true),
+                            icon: const Icon(Icons.map_rounded),
+                            label: const Text('My learning map'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (goMap == true && context.mounted) {
+                      Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => const LearningMapScreen()));
+                    }
                   },
                 ),
                 if (!ready)
