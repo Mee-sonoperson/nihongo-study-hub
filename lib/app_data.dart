@@ -114,6 +114,7 @@ class Assignment {
   String criteria; // 評価のポイント(; 区切り)
   List<Map<String, String>> materials; // 課題の資料 [{"title","url"}]
   String videoUrl; // やり方説明の動画(1分ほど)
+  String exampleImages; // 作文の例文の写真(ドライブのリンク。; 区切り)
   // ↓ 学習者側の状態
   bool done; // 提出済み/受験済み
   String doneAt; // 完了日時
@@ -133,6 +134,7 @@ class Assignment {
     this.criteria = '',
     this.materials = const [],
     this.videoUrl = '',
+    this.exampleImages = '',
     this.done = false,
     this.doneAt = '',
     this.score = -1,
@@ -155,6 +157,7 @@ class Assignment {
     'criteria': criteria,
     'materials': materials,
     'videoUrl': videoUrl,
+    'exampleImages': exampleImages,
     'done': done,
     'doneAt': doneAt,
     'score': score,
@@ -174,6 +177,7 @@ class Assignment {
     criteria: '${m['criteria'] ?? ''}',
     materials: _materialsFrom(m['materials']),
     videoUrl: '${m['videoUrl'] ?? ''}',
+    exampleImages: '${m['exampleImages'] ?? ''}',
     done: m['done'] == true,
     doneAt: '${m['doneAt'] ?? ''}',
     score: m['score'] == null ? -1 : _int(m['score']),
@@ -504,6 +508,7 @@ class AppData extends ChangeNotifier {
   int weeklyGoalDays = 5; // 週の目標学習日数
   String contentUrl = ''; // 管理者が content.json を置いたURL(空ならアプリ内のファイルを使用)
   String lastSyncMessage = '';
+  String recordUrl = ''; // 受講記録の送り先(シートの admin タブ recordUrl)
 
   bool ready = false;
 
@@ -531,11 +536,14 @@ class AppData extends ChangeNotifier {
     dailyGoalMinutes = _settingsBox.get('dailyGoalMinutes', defaultValue: 30);
     weeklyGoalDays = _settingsBox.get('weeklyGoalDays', defaultValue: 5);
     contentUrl = _settingsBox.get('contentUrl', defaultValue: '');
+    recordUrl = _settingsBox.get('recordUrl', defaultValue: '');
 
     _reload();
 
     // 管理者コンテンツ(授業・課題・お知らせ)を読み込んで追加する
     await syncContent();
+    // 送れていない受講記録があれば送る(待たずに裏で)
+    sendPendingRecords();
 
     // 初回起動のときだけ、サンプルの学習記録を入れる(動作イメージ用)
     if (kSeedSampleLogs && _settingsBox.get('seeded') != true) {
@@ -612,6 +620,9 @@ class AppData extends ChangeNotifier {
         // ふつうはこちら: 教材入力シート(Google スプレッドシート)から読む
         data = await loadContentFromSheet(kSheetId);
         fromSheet = true;
+        final settings = await loadSettingsFromSheet(kSheetId);
+        recordUrl = settings['recordUrl'] ?? '';
+        await _settingsBox.put('recordUrl', recordUrl);
         lastSyncMessage = 'Updated from the course sheet';
       } else {
         data = jsonDecode(
@@ -1057,6 +1068,99 @@ class AppData extends ChangeNotifier {
           .map((e) => {'id': e.id, 'progress': e.progress, 'watched': e.watched})
           .toList(),
     });
+  }
+
+  // ===========================================================================
+  // 受講(Start / Completed)
+  //   progress の箱に 'lesson_<id>' で保存し、先生の受講記録シートにも送る
+  // ===========================================================================
+  Map? lessonRecord(String lessonId) {
+    final r = _progressBox.get('lesson_$lessonId');
+    return r is Map ? r : null;
+  }
+
+  bool lessonStarted(String lessonId) =>
+      '${lessonRecord(lessonId)?['startedAt'] ?? ''}'.isNotEmpty;
+  bool lessonCompleted(String lessonId) =>
+      '${lessonRecord(lessonId)?['completedAt'] ?? ''}'.isNotEmpty;
+
+  /// Completed を押せるか: ステップ(無ければ関連する課題)がすべて終わっている
+  bool lessonReadyToComplete(String lessonId) {
+    final st = stepsFor(lessonId);
+    if (st.isNotEmpty) return st.every(isStepDone);
+    final tasks = assignments.where((a) => a.relatedLessonId == lessonId);
+    return tasks.every((a) => a.done);
+  }
+
+  /// 期間内に終わったか(終了日の 23:59 まで OK)
+  bool lessonOnTime(Lesson l) {
+    final done = '${lessonRecord(l.id)?['completedAt'] ?? ''}';
+    if (done.isEmpty || l.availableUntil.isEmpty) return true;
+    return done.substring(0, 10).compareTo(l.availableUntil) <= 0;
+  }
+
+  Future<void> startLesson(Lesson l) => _lessonAction(l, 'start');
+  Future<void> completeLesson(Lesson l) => _lessonAction(l, 'complete');
+
+  Future<void> _lessonAction(Lesson l, String action) async {
+    final key = 'lesson_${l.id}';
+    final r = Map.of(lessonRecord(l.id) ?? {});
+    final field = action == 'start' ? 'startedAt' : 'completedAt';
+    if ('${r[field] ?? ''}'.isEmpty) r[field] = _stamp(DateTime.now());
+    r['${action}Sent'] = false;
+    await _progressBox.put(key, r);
+    notifyListeners();
+    await sendPendingRecords();
+  }
+
+  /// まだ先生に届いていない記録を送る(オフラインのときは後で再送)
+  Future<void> sendPendingRecords() async {
+    if (recordUrl.isEmpty || studentId.isEmpty) return;
+    for (final l in lessons) {
+      final r = lessonRecord(l.id);
+      if (r == null) continue;
+      for (final action in ['start', 'complete']) {
+        final at = '${r[action == 'start' ? 'startedAt' : 'completedAt'] ?? ''}';
+        if (at.isEmpty || r['${action}Sent'] == true) continue;
+        final ok = await _postRecord({
+          'studentId': studentId,
+          'name': userName,
+          'className': className,
+          'lessonId': l.id,
+          'lessonTitle': 'Lesson ${l.number}: ${l.title}',
+          'action': action,
+          'at': at,
+          'periodStart': l.publishedAt,
+          'periodEnd': l.availableUntil,
+        });
+        if (ok) {
+          final fresh = Map.of(lessonRecord(l.id) ?? r);
+          fresh['${action}Sent'] = true;
+          await _progressBox.put('lesson_${l.id}', fresh);
+        }
+      }
+    }
+    notifyListeners();
+  }
+
+  Future<bool> _postRecord(Map<String, dynamic> body) async {
+    try {
+      final res = await http
+          .post(Uri.parse(recordUrl),
+              headers: {'Content-Type': 'text/plain;charset=utf-8'},
+              body: jsonEncode(body))
+          .timeout(const Duration(seconds: 20));
+      return res.statusCode < 400;
+    } catch (e) {
+      debugPrint('record send error: $e');
+      return false;
+    }
+  }
+
+  /// "2026-12-01 19:02" の形
+  String _stamp(DateTime d) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${d.year}-${two(d.month)}-${two(d.day)} ${two(d.hour)}:${two(d.minute)}';
   }
 
   // ===========================================================================

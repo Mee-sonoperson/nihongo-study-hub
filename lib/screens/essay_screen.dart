@@ -19,7 +19,7 @@ import 'package:provider/provider.dart';
 import 'package:record/record.dart';
 import '../app_data.dart';
 import '../helpers.dart';
-import 'flow_screens.dart' show openLink;
+import 'flow_screens.dart' show openLink, ExampleImages;
 import 'portfolio_screen.dart';
 
 class EssayScreen extends StatefulWidget {
@@ -97,6 +97,11 @@ class _EssayScreenState extends State<EssayScreen>
                         trailing: const Icon(Icons.open_in_new, size: 18),
                         onTap: () => openLink(context, a.videoUrl),
                       ),
+                    ),
+                  if (a.exampleImages.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                      child: ExampleImages(a.exampleImages),
                     ),
                   Expanded(
                     child: TabBarView(

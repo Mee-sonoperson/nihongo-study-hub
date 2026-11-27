@@ -158,3 +158,27 @@ List<List<String>> _parseCsv(String text) {
   }
   return rows;
 }
+
+/// admin タブの設定を読む({項目: 値})。読めなければ空。
+///   例: recordUrl = 受講記録を送る先(先生の Apps Script の URL)
+Future<Map<String, String>> loadSettingsFromSheet(String sheetId) async {
+  try {
+    final url = Uri.parse(
+        'https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq'
+        '?tqx=out:csv&headers=1&sheet=admin');
+    final res = await http.get(url).timeout(const Duration(seconds: 15));
+    if (res.statusCode != 200) return {};
+    final text = utf8.decode(res.bodyBytes);
+    if (text.trimLeft().startsWith('<')) return {};
+    final rows = _parseCsv(text);
+    final out = <String, String>{};
+    for (final r in rows.skip(1)) {
+      if (r.length >= 2 && r[0].trim().isNotEmpty) {
+        out[r[0].trim()] = r[1].trim();
+      }
+    }
+    return out;
+  } catch (_) {
+    return {};
+  }
+}

@@ -12,7 +12,7 @@ import 'package:provider/provider.dart';
 import '../app_data.dart';
 import '../helpers.dart';
 import 'essay_screen.dart';
-import 'flow_screens.dart' show openLink;
+import 'flow_screens.dart' show openLink, ExampleImages;
 import 'lessons_screen.dart';
 import 'notices_screen.dart';
 import 'portfolio_screen.dart';
@@ -496,6 +496,10 @@ class AssignmentDetailScreen extends StatelessWidget {
                   ),
                 ),
               ),
+              const SizedBox(height: 14),
+            ],
+            if (a.exampleImages.isNotEmpty) ...[
+              ExampleImages(a.exampleImages),
               const SizedBox(height: 14),
             ],
             if (a.materials.isNotEmpty) ...[

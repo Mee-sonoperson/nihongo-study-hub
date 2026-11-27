@@ -319,6 +319,10 @@ class _StepTile extends StatelessWidget {
 /// ステップを開く
 void openStep(BuildContext context, Map step) {
   final type = '${step['type']}';
+  if (!context.read<AppData>().lessonStarted('${step['lessonId']}')) {
+    showMessage(context, 'Press "Start" at the top of the lesson first.');
+    return;
+  }
   if (type == 'essay' || type == 'presentation') {
     final id = '${step['assignmentId']}';
     if (context.read<AppData>().assignment(id) == null) {
@@ -1061,6 +1065,221 @@ class _RoleplayStepState extends State<_RoleplayStep> {
           ),
         ],
       ],
+    );
+  }
+}
+
+
+// =============================================================================
+// 受講期間・Start・Completed のカード(授業の画面の一番上)
+// =============================================================================
+class LessonProgressCard extends StatelessWidget {
+  final Lesson lesson;
+  const LessonProgressCard(this.lesson, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final data = context.watch<AppData>();
+    final l = lesson;
+    final rec = data.lessonRecord(l.id);
+    final started = data.lessonStarted(l.id);
+    final completed = data.lessonCompleted(l.id);
+    final ready = data.lessonReadyToComplete(l.id);
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    final notYet = l.publishedAt.isNotEmpty && today.compareTo(l.publishedAt) < 0;
+    final overdue =
+        l.availableUntil.isNotEmpty && today.compareTo(l.availableUntil) > 0;
+    final period = (l.publishedAt.isEmpty && l.availableUntil.isEmpty)
+        ? 'Any time'
+        : '${l.publishedAt.isEmpty ? '…' : l.publishedAt}  →  ${l.availableUntil.isEmpty ? '…' : l.availableUntil}';
+    final sent = rec == null ||
+        ((!started || rec['startSent'] == true) &&
+            (!completed || rec['completeSent'] == true));
+
+    Widget status;
+    if (completed) {
+      final onTime = data.lessonOnTime(l);
+      status = _statusLine(
+          onTime ? Icons.verified_rounded : Icons.warning_amber_rounded,
+          onTime ? kGreen : kOrange,
+          onTime
+              ? 'Completed on ${rec?['completedAt']}  (on time)'
+              : 'Completed on ${rec?['completedAt']}  (late)');
+    } else if (started) {
+      status = _statusLine(Icons.play_circle_fill_rounded, kPrimary,
+          'Started on ${rec?['startedAt']}');
+    } else {
+      status = _statusLine(Icons.radio_button_unchecked, Colors.grey.shade600,
+          notYet ? 'This lesson starts on ${l.publishedAt}' : 'Not started yet');
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.date_range_rounded, color: kPrimary),
+                  const SizedBox(width: 8),
+                  const Text('Study period',
+                      style: TextStyle(fontWeight: FontWeight.w800)),
+                  const Spacer(),
+                  if (overdue && !completed)
+                    const Tag('Overdue', color: kRed),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(period,
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 10),
+              status,
+              if (!sent && data.recordUrl.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                      'Not sent to your teacher yet. It will be sent when you are online.',
+                      style: TextStyle(
+                          fontSize: 12, color: Colors.grey.shade600)),
+                ),
+              const SizedBox(height: 12),
+              if (!started)
+                BigButton(
+                  text: 'Start',
+                  icon: Icons.play_arrow_rounded,
+                  onPressed: () {
+                    if (notYet) {
+                      showMessage(
+                          context, 'You can start on ${l.publishedAt}.');
+                      return;
+                    }
+                    if (data.studentId.isEmpty) {
+                      showMessage(context,
+                          'Please enter your Student ID in Settings first.');
+                      return;
+                    }
+                    data.startLesson(l);
+                  },
+                )
+              else if (!completed) ...[
+                BigButton(
+                  text: 'Completed',
+                  icon: Icons.flag_rounded,
+                  color: ready ? kGreen : Colors.grey,
+                  onPressed: () async {
+                    if (!ready) {
+                      showMessage(context,
+                          'Finish all the steps and homework first.');
+                      return;
+                    }
+                    final ok = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text('Finish this lesson?'),
+                        content: const Text(
+                            'Your teacher will see that you completed this lesson.'),
+                        actions: [
+                          TextButton(
+                              onPressed: () => Navigator.pop(ctx, false),
+                              child: const Text('Cancel')),
+                          FilledButton(
+                              onPressed: () => Navigator.pop(ctx, true),
+                              child: const Text('Completed')),
+                        ],
+                      ),
+                    );
+                    if (ok == true) await data.completeLesson(l);
+                  },
+                ),
+                if (!ready)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                        'The button turns green when all steps are done.',
+                        style: TextStyle(
+                            fontSize: 12, color: Colors.grey.shade600)),
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _statusLine(IconData icon, Color color, String text) => Row(
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+              child: Text(text,
+                  style: TextStyle(color: color, fontWeight: FontWeight.w700))),
+        ],
+      );
+}
+
+// =============================================================================
+// 作文の例文(先生がドライブに置いた写真)
+// =============================================================================
+
+/// ドライブのリンク → 画像として表示できる URL
+String imageUrl(String url) {
+  final u = url.trim();
+  final m = RegExp(r'drive\.google\.com/(?:file/d/|open\?id=|uc\?(?:export=\w+&)?id=)([\w-]+)')
+      .firstMatch(u);
+  if (m != null) return 'https://drive.google.com/thumbnail?id=${m[1]}&sz=w1600';
+  return u;
+}
+
+class ExampleImages extends StatelessWidget {
+  final String urls; // ; 区切り
+  const ExampleImages(this.urls, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final list = urls
+        .split(';')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (list.isEmpty) return const SizedBox.shrink();
+    return Card(
+      margin: EdgeInsets.zero,
+      child: ExpansionTile(
+        leading: const Icon(Icons.photo_library_outlined, color: kTeal),
+        title: const Text('Example essay (from your teacher)',
+            style: TextStyle(fontWeight: FontWeight.w700)),
+        childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        children: [
+          for (final u in list) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Image.network(
+                imageUrl(u),
+                fit: BoxFit.contain,
+                webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+                errorBuilder: (_, __, ___) => Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text('Could not show the picture here.',
+                      style: TextStyle(color: Colors.grey.shade600)),
+                ),
+              ),
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () => openLink(context, u),
+                icon: const Icon(Icons.open_in_new, size: 16),
+                label: const Text('Open full size'),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

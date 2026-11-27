@@ -371,6 +371,7 @@ class LessonDetailScreen extends StatelessWidget {
             ],
             const SizedBox(height: 16),
             // ---- 1課の流れ(シートの steps タブ)----
+            LessonProgressCard(l),
             LessonStepsCard(l.id),
             BigButton(
               text: 'Watch video',
