@@ -220,6 +220,9 @@ class SubmissionDetailScreen extends StatelessWidget {
     final sub = s;
     final color = fileColor(sub.fileType);
     final bytes = data.fileBytes(sub.id);
+    // 別のスマホで提出したファイルは、先生のドライブから取ってくる
+    final loading = bytes == null && data.loggedIn && !data.fetchFailed.contains(sub.id);
+    if (loading) data.fetchFile(sub.id);
     final a = data.assignment(sub.assignmentId);
 
     return Scaffold(
@@ -257,6 +260,15 @@ class SubmissionDetailScreen extends StatelessWidget {
                             child: Text(utf8.decode(bytes, allowMalformed: true),
                                 style: const TextStyle(
                                     fontSize: 15, height: 1.8)),
+                          )
+                    : loading
+                        ? const Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              CircularProgressIndicator(),
+                              SizedBox(height: 10),
+                              Text('Loading your file…'),
+                            ],
                           )
                     : Column(
                         mainAxisAlignment: MainAxisAlignment.center,

@@ -23,6 +23,7 @@ import 'screens/study_screen.dart';
 import 'screens/assignments_screen.dart';
 import 'screens/lessons_screen.dart';
 import 'screens/notices_screen.dart';
+import 'screens/login_screen.dart';
 
 void main() {
   runApp(
@@ -47,82 +48,6 @@ class MyApp extends StatelessWidget {
   }
 }
 
-/// 学生に最初に ID・名前・クラスを入力してもらうダイアログ
-void _showRegistrationDialog(BuildContext context, AppData data) {
-  final nameCtrl = TextEditingController();
-  final idCtrl = TextEditingController();
-  final classCtrl = TextEditingController();
-  showDialog(
-    context: context,
-    barrierDismissible: false, // 必ず入力してもらう
-    builder: (ctx) => AlertDialog(
-      title: const Text('Welcome!'),
-      content: SizedBox(
-        width: 360,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Please register with the Student ID your teacher gave you. '
-              'This ID connects your submissions to your school record.',
-              style: TextStyle(fontSize: 13),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: nameCtrl,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'Your name',
-                prefixIcon: Icon(Icons.person_outline),
-              ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: idCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Student ID (from your teacher)',
-                hintText: 'e.g. S2026-0142',
-                prefixIcon: Icon(Icons.badge_outlined),
-              ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: classCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Class / Course',
-                hintText: 'e.g. N3 Evening 2026',
-                prefixIcon: Icon(Icons.school_outlined),
-              ),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        FilledButton(
-          onPressed: () {
-            if (idCtrl.text.trim().isEmpty || nameCtrl.text.trim().isEmpty) {
-              ScaffoldMessenger.of(ctx).showSnackBar(
-                const SnackBar(
-                  content: Text('Name and Student ID are required'),
-                ),
-              );
-              return;
-            }
-            data.saveSettings(
-              name: nameCtrl.text,
-              studentIdValue: idCtrl.text,
-              classNameValue: classCtrl.text,
-            );
-            Navigator.pop(ctx);
-          },
-          child: const Text('Start'),
-        ),
-      ],
-    ),
-  );
-}
-
 /// 下のタブバー付きのメイン画面
 class RootPage extends StatefulWidget {
   const RootPage({super.key});
@@ -133,7 +58,6 @@ class RootPage extends StatefulWidget {
 
 class _RootPageState extends State<RootPage> {
   int _tab = 0;
-  bool _registrationChecked = false;
 
   @override
   Widget build(BuildContext context) {
@@ -146,14 +70,10 @@ class _RootPageState extends State<RootPage> {
       );
     }
 
-    // 初回起動: 学籍番号が未登録なら登録画面を見せる
-    if (!_registrationChecked) {
-      _registrationChecked = true;
-      if (data.studentId.isEmpty) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _showRegistrationDialog(context, data);
-        });
-      }
+    // ログインしていなければログイン画面
+    if (!data.loggedIn) {
+      _tab = 0;
+      return const LoginScreen();
     }
 
     final pages = [

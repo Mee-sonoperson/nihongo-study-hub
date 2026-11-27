@@ -20,22 +20,63 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  late final nameCtrl =
-      TextEditingController(text: context.read<AppData>().userName);
-  late final idCtrl =
-      TextEditingController(text: context.read<AppData>().studentId);
-  late final classCtrl =
-      TextEditingController(text: context.read<AppData>().className);
   late final urlCtrl =
       TextEditingController(text: context.read<AppData>().contentUrl);
 
   @override
   void dispose() {
-    nameCtrl.dispose();
-    idCtrl.dispose();
-    classCtrl.dispose();
     urlCtrl.dispose();
     super.dispose();
+  }
+
+  /// ログアウト(先にサーバーへ保存。保存できないときは確認する)
+  Future<void> _logout(BuildContext context, AppData data) async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Log out?'),
+        content: const Text(
+            'Your work will be saved online, then removed from this phone. '
+            'You can log in again on any phone.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Log out')),
+        ],
+      ),
+    );
+    if (yes != true || !context.mounted) return;
+    final ok = await data.logout();
+    if (ok) {
+      if (context.mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+      return;
+    }
+    if (!context.mounted) return;
+    final force = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Not saved online'),
+        content: const Text(
+            'Your latest work could not be saved (no connection). '
+            'If you log out now, it will be lost. Try again when you are online.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Stay logged in')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Log out anyway',
+                  style: TextStyle(color: kRed))),
+        ],
+      ),
+    );
+    if (force == true) {
+      await data.logout(force: true);
+      if (context.mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+    }
   }
 
   @override
@@ -47,44 +88,72 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            // ---- プロフィール ----
-            const SectionTitle('Profile'),
+            // ---- アカウント(ログイン中の学生)----
+            const SectionTitle('Account'),
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    TextField(
-                      controller: nameCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Your name',
-                        prefixIcon: Icon(Icons.person_outline),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const CircleAvatar(
+                        backgroundColor: kPrimary,
+                        child: Icon(Icons.person, color: Colors.white),
                       ),
-                      onChanged: (v) => data.saveSettings(name: v),
+                      title: Text(data.userName,
+                          style: const TextStyle(fontWeight: FontWeight.w700)),
+                      subtitle: Text(data.className.isEmpty
+                          ? 'ID: ${data.studentId}'
+                          : 'ID: ${data.studentId} · ${data.className}'),
                     ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: idCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Student ID (required)',
-                        hintText: 'e.g. S2026-0142',
-                        prefixIcon: Icon(Icons.badge_outlined),
-                        helperText:
-                            'Your teacher assigns this ID. Needed to link your submissions.',
-                      ),
-                      onChanged: (v) => data.saveSettings(studentIdValue: v),
+                    Row(
+                      children: [
+                        Icon(
+                          data.syncStatus == 'offline'
+                              ? Icons.cloud_off_rounded
+                              : Icons.cloud_done_rounded,
+                          size: 18,
+                          color: data.syncStatus == 'offline'
+                              ? kOrange
+                              : kGreen,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            data.syncStatus == 'offline'
+                                ? 'Not saved online yet (no connection)'
+                                : (data.syncStatus == 'saving'
+                                    ? 'Saving…'
+                                    : 'Your work is saved online'),
+                            style: TextStyle(
+                                fontSize: 13, color: Colors.grey.shade700),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () async {
+                            final ok = await data.pushState();
+                            await data.uploadPendingFiles();
+                            if (context.mounted) {
+                              showMessage(context,
+                                  ok ? 'Saved online' : 'Could not connect');
+                            }
+                          },
+                          child: const Text('Save now'),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: classCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Class / Course',
-                        hintText: 'e.g. N3 Evening 2026',
-                        prefixIcon: Icon(Icons.school_outlined),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                            foregroundColor: kRed),
+                        icon: const Icon(Icons.logout_rounded),
+                        label: const Text('Log out'),
+                        onPressed: () => _logout(context, data),
                       ),
-                      onChanged: (v) =>
-                          data.saveSettings(classNameValue: v),
                     ),
                   ],
                 ),

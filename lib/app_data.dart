@@ -15,6 +15,7 @@
 // 保存先はスマホ内のデータベース(Hive)。インターネット無しでも動きます。
 // =============================================================================
 
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -508,7 +509,12 @@ class AppData extends ChangeNotifier {
   int weeklyGoalDays = 5; // 週の目標学習日数
   String contentUrl = ''; // 管理者が content.json を置いたURL(空ならアプリ内のファイルを使用)
   String lastSyncMessage = '';
-  String recordUrl = ''; // 受講記録の送り先(シートの admin タブ recordUrl)
+  String recordUrl = ''; // 学校のサーバー(Apps Script)の URL(シートの admin タブ recordUrl)
+  String pin = ''; // ログインの暗証番号
+  String syncStatus = ''; // 'saved' / 'saving' / 'offline'
+  Timer? _syncTimer;
+  bool _syncing = false;
+  bool _restoring = false; // ログイン中(サーバーから読み込み中)は保存しない
 
   bool ready = false;
 
@@ -537,13 +543,17 @@ class AppData extends ChangeNotifier {
     weeklyGoalDays = _settingsBox.get('weeklyGoalDays', defaultValue: 5);
     contentUrl = _settingsBox.get('contentUrl', defaultValue: '');
     recordUrl = _settingsBox.get('recordUrl', defaultValue: '');
+    pin = _settingsBox.get('pin', defaultValue: '');
 
     _reload();
 
     // 管理者コンテンツ(授業・課題・お知らせ)を読み込んで追加する
     await syncContent();
-    // 送れていない受講記録があれば送る(待たずに裏で)
-    sendPendingRecords();
+    // 送れていない受講記録・ファイルがあれば送る(待たずに裏で)
+    if (loggedIn) {
+      sendPendingRecords();
+      uploadPendingFiles();
+    }
 
     // 初回起動のときだけ、サンプルの学習記録を入れる(動作イメージ用)
     if (kSeedSampleLogs && _settingsBox.get('seeded') != true) {
@@ -896,6 +906,7 @@ class AppData extends ChangeNotifier {
     );
     await _filesBox.put(sub.id, bytes);
     await _submissionsBox.put(sub.id, sub.toMap());
+    await _queueUpload(sub.id);
 
     final a = assignment(assignmentId);
     if (a != null && !a.done) {
@@ -1124,6 +1135,7 @@ class AppData extends ChangeNotifier {
         if (at.isEmpty || r['${action}Sent'] == true) continue;
         final ok = await _postRecord({
           'studentId': studentId,
+          'pin': pin,
           'name': userName,
           'className': className,
           'lessonId': l.id,
@@ -1145,12 +1157,8 @@ class AppData extends ChangeNotifier {
 
   Future<bool> _postRecord(Map<String, dynamic> body) async {
     try {
-      final res = await http
-          .post(Uri.parse(recordUrl),
-              headers: {'Content-Type': 'text/plain;charset=utf-8'},
-              body: jsonEncode(body))
-          .timeout(const Duration(seconds: 20));
-      return res.statusCode < 400;
+      final res = await _call(body);
+      return res != null && res['ok'] == true;
     } catch (e) {
       debugPrint('record send error: $e');
       return false;
@@ -1278,6 +1286,327 @@ class AppData extends ChangeNotifier {
   }
 
   /// すべての学習者データを消す(設定画面から)
+  // ===========================================================================
+  // ログイン・ログアウト・同期(学校のサーバー = 先生の Apps Script)
+  //   学生のデータ(進み具合・作文・記録)は先生のドライブにも保存され、
+  //   別のスマホでログインしても続きから使える。
+  // ===========================================================================
+  bool get loggedIn => studentId.isNotEmpty && pin.isNotEmpty;
+  bool get serverReady => recordUrl.isNotEmpty;
+
+  /// サーバーに送って JSON の返事をもらう(つながらなければ null)
+  Future<Map?> _call(Map<String, dynamic> body,
+      {Duration timeout = const Duration(seconds: 30)}) async {
+    if (recordUrl.isEmpty) return null;
+    try {
+      final res = await http
+          .post(Uri.parse(recordUrl),
+              headers: {'Content-Type': 'text/plain;charset=utf-8'},
+              body: jsonEncode(body))
+          .timeout(timeout);
+      if (res.statusCode >= 400) return null;
+      final v = jsonDecode(utf8.decode(res.bodyBytes));
+      return v is Map ? v : null;
+    } catch (e) {
+      debugPrint('server error: $e');
+      return null;
+    }
+  }
+
+  /// ログイン。うまくいけば null、だめならエラーの文を返す
+  Future<String?> login(String id, String pinInput) async {
+    if (!serverReady) {
+      await syncContent(); // サーバーの URL をもう一度読む
+      if (!serverReady) return 'The school server is not ready yet. Ask your teacher.';
+    }
+    final idT = id.trim();
+    final pinT = pinInput.trim();
+    final res = await _call({'action': 'login', 'studentId': idT, 'pin': pinT});
+    if (res == null) return 'Could not connect. Check your internet.';
+    if (res['ok'] != true) return '${res['error'] ?? 'Login failed'}';
+
+    // サーバーに保存されたデータを先に読む(読めなければログインしない)
+    final loaded = await _call({'action': 'load', 'studentId': idT, 'pin': pinT});
+    if (loaded == null || loaded['ok'] != true) {
+      return 'Could not load your saved work. Please try again.';
+    }
+    final sameUser = studentId == idT;
+    _restoring = true;
+    _syncTimer?.cancel();
+    studentId = idT;
+    pin = pinT;
+    userName = '${res['name'] ?? ''}'.isEmpty ? idT : '${res['name']}';
+    className = '${res['className'] ?? ''}';
+    await _settingsBox.put('studentId', studentId);
+    await _settingsBox.put('pin', pin);
+    await _settingsBox.put('userName', userName);
+    await _settingsBox.put('className', className);
+
+    final text = '${loaded['state'] ?? ''}';
+    if (text.isNotEmpty && text != 'null') {
+      try {
+        await _importState(jsonDecode(text) as Map);
+      } catch (e) {
+        debugPrint('import error: $e');
+      }
+    } else if (!sameUser) {
+      // サーバーに何も無く、前の人のデータが残っていたら消す
+      await _clearStudentData();
+    }
+    _restoring = false;
+    _reload();
+    super.notifyListeners();
+    await pushState();
+    sendPendingRecords();
+    uploadPendingFiles();
+    return null;
+  }
+
+  /// ログアウト。サーバーに保存できなかったら false(データは消さない)
+  Future<bool> logout({bool force = false}) async {
+    final ok = await pushState();
+    final filesOk = await uploadPendingFiles();
+    if (!force && (!ok || !filesOk)) return false;
+    await _clearStudentData();
+    studentId = '';
+    pin = '';
+    userName = 'Student';
+    className = '';
+    for (final k in ['studentId', 'pin', 'userName', 'className']) {
+      await _settingsBox.delete(k);
+    }
+    syncStatus = '';
+    _reload();
+    super.notifyListeners();
+    return true;
+  }
+
+  /// この端末の学生データを消す(授業・課題の内容は残し、進み具合だけ戻す)
+  Future<void> _clearStudentData() async {
+    await _logsBox.clear();
+    await _submissionsBox.clear();
+    await _filesBox.clear();
+    await _draftsBox.clear();
+    await _helperBox.clear();
+    await _progressBox.clear();
+    await _settingsBox.delete('pendingUploads');
+    for (final k in _assignmentsBox.keys.toList()) {
+      if ('$k'.startsWith('my_')) {
+        await _assignmentsBox.delete(k);
+        continue;
+      }
+      final a = Assignment.fromMap(_assignmentsBox.get(k));
+      a.done = false;
+      a.doneAt = '';
+      a.score = -1;
+      await _assignmentsBox.put(k, a.toMap());
+    }
+    for (final k in _lessonsBox.keys.toList()) {
+      final l = Lesson.fromMap(_lessonsBox.get(k));
+      l.progress = 0;
+      l.watched = false;
+      await _lessonsBox.put(k, l.toMap());
+    }
+    for (final k in _noticesBox.keys.toList()) {
+      final n = Notice.fromMap(_noticesBox.get(k));
+      n.read = false;
+      await _noticesBox.put(k, n.toMap());
+    }
+  }
+
+  /// この端末の学生データを1つの JSON にまとめる(ファイルの中身は別に送る)
+  Map<String, dynamic> _exportState() => {
+        'savedAt': DateTime.now().toIso8601String(),
+        'logs': _logsBox.values.toList(),
+        'submissions': _submissionsBox.values.toList(),
+        'drafts': _draftsBox.values.toList(),
+        'helper': _helperBox.values.toList(),
+        'progress': {for (final k in _progressBox.keys) '$k': _progressBox.get(k)},
+        'myTasks': _assignmentsBox.keys
+            .where((k) => '$k'.startsWith('my_'))
+            .map((k) => _assignmentsBox.get(k))
+            .toList(),
+        'assignmentState': {
+          for (final a in assignments)
+            a.id: {'done': a.done, 'doneAt': a.doneAt, 'score': a.score}
+        },
+        'lessonState': {
+          for (final l in lessons)
+            l.id: {'progress': l.progress, 'watched': l.watched}
+        },
+        'noticeRead': notices.where((n) => n.read).map((n) => n.id).toList(),
+        'goals': {'daily': dailyGoalMinutes, 'weekly': weeklyGoalDays},
+      };
+
+  Future<void> _importState(Map st) async {
+    await _clearStudentData();
+    Future<void> fill(Box box, String key) async {
+      for (final m in (st[key] as List? ?? [])) {
+        await box.put('${(m as Map)['id']}', m);
+      }
+    }
+
+    await fill(_logsBox, 'logs');
+    await fill(_submissionsBox, 'submissions');
+    await fill(_draftsBox, 'drafts');
+    await fill(_helperBox, 'helper');
+    await fill(_assignmentsBox, 'myTasks');
+    final pr = st['progress'];
+    if (pr is Map) {
+      for (final e in pr.entries) {
+        await _progressBox.put('${e.key}', e.value);
+      }
+    }
+    final asg = st['assignmentState'];
+    if (asg is Map) {
+      for (final e in asg.entries) {
+        final raw = _assignmentsBox.get('${e.key}');
+        if (raw == null) continue;
+        final a = Assignment.fromMap(raw);
+        final v = e.value as Map;
+        a.done = v['done'] == true;
+        a.doneAt = '${v['doneAt'] ?? ''}';
+        a.score = v['score'] == null ? -1 : _int(v['score']);
+        await _assignmentsBox.put(a.id, a.toMap());
+      }
+    }
+    final ls = st['lessonState'];
+    if (ls is Map) {
+      for (final e in ls.entries) {
+        final raw = _lessonsBox.get('${e.key}');
+        if (raw == null) continue;
+        final l = Lesson.fromMap(raw);
+        final v = e.value as Map;
+        l.progress = (v['progress'] as num?)?.toDouble() ?? 0;
+        l.watched = v['watched'] == true;
+        await _lessonsBox.put(l.id, l.toMap());
+      }
+    }
+    for (final id in (st['noticeRead'] as List? ?? [])) {
+      final raw = _noticesBox.get('$id');
+      if (raw == null) continue;
+      final n = Notice.fromMap(raw);
+      n.read = true;
+      await _noticesBox.put(n.id, n.toMap());
+    }
+    final g = st['goals'];
+    if (g is Map) {
+      dailyGoalMinutes = _int(g['daily']) == 0 ? 30 : _int(g['daily']);
+      weeklyGoalDays = _int(g['weekly']) == 0 ? 5 : _int(g['weekly']);
+      await _settingsBox.put('dailyGoalMinutes', dailyGoalMinutes);
+      await _settingsBox.put('weeklyGoalDays', weeklyGoalDays);
+    }
+  }
+
+  /// 変更があったら、少し待ってからサーバーに保存する
+  @override
+  void notifyListeners() {
+    super.notifyListeners();
+    if (loggedIn && serverReady && ready) {
+      _syncTimer?.cancel();
+      _syncTimer = Timer(const Duration(seconds: 4), pushState);
+    }
+  }
+
+  /// 今のデータをサーバーに保存する
+  Future<bool> pushState() async {
+    if (!loggedIn || !serverReady || _restoring) return false;
+    if (_syncing) return false;
+    _syncing = true;
+    syncStatus = 'saving';
+    super.notifyListeners();
+    final res = await _call({
+      'action': 'save',
+      'studentId': studentId,
+      'pin': pin,
+      'state': jsonEncode(_exportState()),
+    });
+    _syncing = false;
+    final ok = res != null && res['ok'] == true;
+    syncStatus = ok ? 'saved' : 'offline';
+    super.notifyListeners();
+    return ok;
+  }
+
+  Future<void> _queueUpload(String submissionId) async {
+    final list = List<String>.from(
+        _settingsBox.get('pendingUploads', defaultValue: <String>[]) as List);
+    if (!list.contains(submissionId)) list.add(submissionId);
+    await _settingsBox.put('pendingUploads', list);
+    uploadPendingFiles();
+  }
+
+  /// まだ送っていない提出ファイルを先生のドライブに送る。全部送れたら true
+  Future<bool> uploadPendingFiles() async {
+    if (!loggedIn || !serverReady) return false;
+    final list = List<String>.from(
+        _settingsBox.get('pendingUploads', defaultValue: <String>[]) as List);
+    final left = <String>[];
+    for (final id in list) {
+      final raw = _submissionsBox.get(id);
+      final bytes = fileBytes(id);
+      if (raw == null || bytes == null) continue; // 消された
+      final sub = Submission.fromMap(raw);
+      final res = await _call({
+        'action': 'upload',
+        'studentId': studentId,
+        'pin': pin,
+        'submissionId': id,
+        'fileName': sub.fileName,
+        'mimeType': _mimeOf(sub.fileName),
+        'data': base64Encode(bytes),
+      }, timeout: const Duration(minutes: 3));
+      if (res == null || res['ok'] != true) left.add(id);
+    }
+    await _settingsBox.put('pendingUploads', left);
+    return left.isEmpty;
+  }
+
+  /// この端末に無いファイル(別のスマホで提出したもの)をサーバーから取る
+  final _fetching = <String, Future<Uint8List?>>{};
+  final fetchFailed = <String>{};
+  Future<Uint8List?> fetchFile(String submissionId) {
+    final local = fileBytes(submissionId);
+    if (local != null) return Future.value(local);
+    return _fetching[submissionId] ??= _download(submissionId)
+        .whenComplete(() => _fetching.remove(submissionId));
+  }
+
+  Future<Uint8List?> _download(String submissionId) async {
+    if (!loggedIn || !serverReady) return null;
+    final res = await _call({
+      'action': 'download',
+      'studentId': studentId,
+      'pin': pin,
+      'submissionId': submissionId,
+    }, timeout: const Duration(minutes: 3));
+    if (res == null || res['ok'] != true || res['data'] == null) {
+      fetchFailed.add(submissionId);
+      super.notifyListeners();
+      return null;
+    }
+    final bytes = base64Decode('${res['data']}');
+    await _filesBox.put(submissionId, bytes);
+    super.notifyListeners();
+    return bytes;
+  }
+
+  String _mimeOf(String name) {
+    final ext = name.split('.').last.toLowerCase();
+    const m = {
+      'pdf': 'application/pdf',
+      'm4a': 'audio/mp4',
+      'mp3': 'audio/mpeg',
+      'webm': 'audio/webm',
+      'wav': 'audio/wav',
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'txt': 'text/plain',
+    };
+    return m[ext] ?? 'application/octet-stream';
+  }
+
   Future<void> resetAll() async {
     await _logsBox.clear();
     await _submissionsBox.clear();
