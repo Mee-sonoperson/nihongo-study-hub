@@ -1,0 +1,7 @@
+{
+  "_README": "Content now comes from the Google Sheet (see lib/config.dart). This file is only used if the sheet cannot be loaded on the very first launch.",
+  "lessons": [],
+  "assignments": [],
+  "notices": [],
+  "vocabulary": []
+}
