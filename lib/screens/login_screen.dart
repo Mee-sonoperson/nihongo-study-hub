@@ -92,6 +92,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     controller: idCtrl,
                     textInputAction: TextInputAction.next,
                     autocorrect: false,
+                    enableSuggestions: false,
+                    // 英数字のキーボードを出す(全角になりにくい)
+                    keyboardType: TextInputType.visiblePassword,
                     decoration: const InputDecoration(
                       labelText: 'Student ID',
                       hintText: 'e.g. S2026-0142',

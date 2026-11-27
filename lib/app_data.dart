@@ -467,6 +467,23 @@ List<Map<String, String>> _materialsFrom(dynamic v) => (v as List? ?? [])
         })
     .toList();
 
+/// 日本語入力で打った全角の英数字・いろいろな横線・空白を、半角にそろえる
+///   例: "ＴＥＳＴ－０００１" / "TEST ー 0001" → "TEST-0001"
+String normalizeId(String input) {
+  final b = StringBuffer();
+  for (final r in input.runes) {
+    var c = r;
+    if (c >= 0xFF01 && c <= 0xFF5E) c -= 0xFEE0; // 全角 → 半角
+    if (const [0x2010, 0x2011, 0x2012, 0x2013, 0x2014, 0x2015, 0x2212,
+        0x30FC, 0xFF70, 0x2500, 0x2501].contains(c)) {
+      c = 0x2D; // いろいろな横線 → "-"
+    }
+    if (c == 0x20 || c == 0x3000 || c == 0x09) continue; // 空白は消す
+    b.writeCharCode(c);
+  }
+  return b.toString();
+}
+
 int _int(dynamic v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
 
 // -----------------------------------------------------------------------------
@@ -1319,8 +1336,8 @@ class AppData extends ChangeNotifier {
       await syncContent(); // サーバーの URL をもう一度読む
       if (!serverReady) return 'The school server is not ready yet. Ask your teacher.';
     }
-    final idT = id.trim();
-    final pinT = pinInput.trim();
+    final idT = normalizeId(id);
+    final pinT = normalizeId(pinInput);
     final res = await _call({'action': 'login', 'studentId': idT, 'pin': pinT});
     if (res == null) return 'Could not connect. Check your internet.';
     if (res['ok'] != true) return '${res['error'] ?? 'Login failed'}';
